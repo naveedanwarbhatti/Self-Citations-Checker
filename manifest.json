@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Self-Citation Checker",
+  "name": "Self-Citations Checker",
   "version": "1.6",
   "description": "Calculates author self-citation rates on Google Scholar using DBLP and OpenCitation data.",
   "permissions": [
