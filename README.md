@@ -8,7 +8,7 @@ A browser extension that automatically calculates and displays an author’s sel
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/cdikdlblibjpejgihfghambmclimmgaa?utm_source=item-share-cb">
-    <img src="https://storage.googleapis.com/web-dev-uploads/image/WlD8wC6g8khYWPJUsQceQkhXSlv1/iNEddTyWiMfLSwFD6qGq.png" alt="Available in the Chrome Web Store">
+    <img src="https://developer.chrome.com/static/docs/webstore/branding/image/UV4C4ybeBTsZt43U4xis.png" alt="Available in the Chrome Web Store">
   </a>
 </p>
 
@@ -35,24 +35,30 @@ This extension adds that missing dimension at a glance, promoting a more transpa
 
 ## How It Works ⚙️
 
-1. **UI Injection** (`content.ts`)  
-   - Scrapes the author’s name + first 10 publication titles.  
-   - Adds a temporary “Calculating…” panel to the UI.
+The extension is split into two main components:
 
-2. **Data Processing** (`background.ts`)  
-   - Sanitises the name (`Dr.`, `Ph.D.` etc. removed).  
-   - Calls the **DBLP Search API** for candidate author profiles.  
-   - Scores candidates by Jaro-Winkler similarity and publication overlap to pick the best match.  
-   - Extracts the author’s DBLP *pid*.
+1. **UI Injection (`content.ts`)**  
+   - When you open a Google Scholar author page, the content script grabs the author’s name **and the first 10 publication titles**.  
+   - It immediately injects a *“Calculating …”* status panel into the statistics area so the user knows something is happening.
 
-3. **Citation Analysis** (`background.ts`)  
-   - Runs two SPARQL queries against the **DBLP SPARQL endpoint**  
-     1. Total citing papers.  
-     2. Citing papers also listing the target author → self-citations.
+2. **Data Processing (`background.ts`)**  
+   - The scraped data are forwarded to the background script.  
+   - The script **sanitises the name** (removing “Dr.”, “Ph.D.”, etc.).  
+   - It queries the **DBLP Search API** to fetch candidate author profiles.  
+   - Each candidate receives a **score** based on  
+     - *Jaro-Winkler similarity* between names, and  
+     - the count of **overlapping publication titles**.  
+   - If a candidate’s score exceeds a safety threshold, its **DBLP profile ID (pid)** is selected.
 
-4. **Displaying Results** (`content.ts`)  
-   - Receives the statistics (total citations, self-citations & %) from the background script.  
-   - Replaces the temporary panel with the final, colour-coded percentage, tooltip and **Refresh** button.
+3. **Citation Analysis (`background.ts`)**  
+   - Using that pid, the script fires **two SPARQL queries** against the DBLP SPARQL endpoint (which incorporates **OpenCitations** links):  
+     1. **Total Citing Papers** – how many papers cite any work by the author.  
+     2. **Self-Citing Papers** – of those, how many also list the same author as a co-author (i.e., genuine self-citations).
+
+4. **Displaying Results (`content.ts`)**  
+   - The background script returns **total citations, self-citations, and percentage**.  
+   - The content script replaces the “Calculating …” panel with the final, colour-coded percentage, plus a tooltip explanation and a **Refresh** button for manual re-calculation.
+
 
 ---
 
@@ -84,7 +90,7 @@ Navigate to any Google Scholar author profile to see the extension in action.
 | ------------------ | ------------------------------------------------------------ |
 | **Language**       | TypeScript (modern syntax & type safety)                     |
 | **Platform**       | Chrome Extension APIs (`chrome.runtime`, `chrome.storage` …) |
-| **Data Sources**   | DBLP Search API • DBLP SPARQL Endpoint                       |
+| **Data Sources**   | DBLP Search API • DBLP SPARQL Endpoint • OpenCitations       |
 | **Algorithms**     | DOM manipulation • async/await • Jaro-Winkler similarity     |
 | **Error Handling** | Custom `DblpRateLimitError` for graceful user feedback       |
 
@@ -112,16 +118,16 @@ Pull requests are welcome!
 
 ## Disclaimer 📝
 
-* Citation data comes from DBLP (and its OpenCitations integration) and may be incomplete or out-of-date.
-* The author-matching heuristic is highly accurate but not infallible, especially for common names.
-* Treat the self-citation percentage as **supplementary context**, not a definitive measure of impact or integrity.
+* The citation data is sourced from the DBLP-OpenCitations integration. This data is open and invaluable, but its **coverage may not be 100% complete** or perfectly up-to-date.
+* The author-matching heuristic is designed to be accurate but may occasionally fail to find the correct profile or select an incorrect one for authors with common names.
+* This tool is intended for informational purposes and should be used as a supplementary metric, not as a definitive measure of scholarly integrity or impact.
 
 ---
 
 ## License 📄
 
 This project is licensed under the **MIT License**.
-See the [LICENSE](LICENSE) file for full details.
 
-```
-```
+
+
+
