@@ -13,7 +13,7 @@ A browser extension that automatically calculates and displays an author’s sel
 </p>
 
 <p align="center">
-  <img src="https://i.imgur.com/example.gif" alt="Scholar Self-Citation Analyzer in action" width="750">
+  <img src="https://github.com/naveedanwarbhatti/Self-Citations-Checker/blob/main/images/Screenshot.png" alt="Scholar Self-Citation Analyzer in action" width="750">
 </p>
 <p align="center"><em>(Replace this sample GIF with a screen recording of your actual extension.)</em></p>
 
