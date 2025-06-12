@@ -6,14 +6,14 @@
 
 A browser extension that automatically calculates and displays an author’s self-citation rate directly on their Google Scholar profile page.
 
-<p align="center">
+<p align="left">
   <a href="https://chromewebstore.google.com/detail/cdikdlblibjpejgihfghambmclimmgaa?utm_source=item-share-cb">
     <img src="https://developer.chrome.com/static/docs/webstore/branding/image/UV4C4ybeBTsZt43U4xis.png" alt="Available in the Chrome Web Store">
   </a>
 </p>
 
 <p align="center">
-  <img src="https://github.com/naveedanwarbhatti/Self-Citations-Checker/blob/main/images/Screenshot.png" alt="Scholar Self-Citation Analyzer in action" width="750">
+  <img src="https://github.com/naveedanwarbhatti/Self-Citations-Checker/blob/main/images/Screenshot.png" alt="Scholar Self-Citation Analyzer in action">
 </p>
 <p align="center"><em>(Replace this sample GIF with a screen recording of your actual extension.)</em></p>
 
