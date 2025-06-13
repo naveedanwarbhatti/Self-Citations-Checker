@@ -1,10 +1,10 @@
 
 # Scholar Self-Citation Analyzer
 
-![Version 1.6](https://img.shields.io/badge/version-1.6-blue.svg)
+![Version 2.0](https://img.shields.io/badge/version-1.7-blue.svg)
 ![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
-A browser extension that automatically calculates and displays an author’s self-citation rate directly on their Google Scholar profile page.
+A browser extension that automatically calculates and displays an author’s self-citation rate directly on their Google Scholar profile page, **now with a hybrid DBLP + OpenAlex backend to support all academic disciplines.**
 
 <p align="left">
   <a href="https://chromewebstore.google.com/detail/cdikdlblibjpejgihfghambmclimmgaa?utm_source=item-share-cb">
@@ -15,50 +15,47 @@ A browser extension that automatically calculates and displays an author’s sel
 <p align="center">
   <img src="https://github.com/naveedanwarbhatti/Self-Citations-Checker/blob/main/images/Screenshot.png" alt="Scholar Self-Citation Analyzer in action">
 </p>
-<p align="center"><em>(Replace this sample GIF with a screen recording of your actual extension.)</em></p>
+<p align="center"><em>The UI dynamically displays the data source (DBLP or OpenAlex).</em></p>
 
 ---
 
 ## The Problem 🤔
 
-Google Scholar is an invaluable tool for academics, but its headline metrics do not distinguish between **external citations** and **self-citations**. A high citation count can therefore be misleading if a large fraction comes from the author’s own work.  
+Google Scholar is an invaluable tool for academics, but its headline metrics do not distinguish between **external citations** and **self-citations**. A high citation count can therefore be misleading if a large fraction comes from the author’s own work.
 This extension adds that missing dimension at a glance, promoting a more transparent and nuanced understanding of scholarly impact.
 
 ## Key Features 🚀
 
-- **Seamless Integration** – injects a **Self-Citation Rate** panel directly into the statistics table on Google Scholar author pages.  
-- **At-a-Glance Percentage** – displays a clear, colour-coded self-citation percentage.  
-- **Detailed Tooltip** – hover over the **?** icon to see the definition of a self-citation, data sources and a disclaimer.  
-- **Smart Author Matching** – heuristic algorithm (Jaro-Winkler similarity + publication overlap) finds the correct DBLP profile even with name variations.  
-- **Robust Error Handling** – if DBLP is rate-limited, shows a friendly “Too many requests – try again” message instead of failing silently.  
-- **On-Demand Refresh** – one-click **Refresh** button recalculates the metric.
+- **Hybrid Data Sources** – Prioritizes the high-quality **DBLP** dataset for Computer Science, and automatically **falls back to the comprehensive OpenAlex database** for all other disciplines.
+- **Seamless Integration** – Injects a **Self-Citation Rate** panel directly into the statistics table on Google Scholar author pages.
+- **Dynamic & Detailed Tooltip** – Hover over the **?** icon to see the definition of a self-citation, a disclaimer, and the **specific data source (DBLP or OpenAlex) used for the calculation**.
+- **Smart Author Matching** – A robust heuristic algorithm (Jaro-Winkler similarity + publication overlap) finds the correct author profile on both DBLP and OpenAlex.
+- **On-Demand Refresh** – A one-click **Refresh** button clears the cache and recalculates the metric.
+- **30-Day Caching** – Results are cached locally for 30 days to provide instant results and minimize API calls.
 
 ## How It Works ⚙️
 
-The extension is split into two main components:
+The extension uses a tiered, fallback data strategy:
 
-1. **UI Injection (`content.ts`)**  
-   - When you open a Google Scholar author page, the content script grabs the author’s name **and the first 10 publication titles**.  
-   - It immediately injects a *“Calculating …”* status panel into the statistics area so the user knows something is happening.
+1.  **UI Injection (`content.ts`)**
+    - When you open a Google Scholar author page, the content script grabs the author’s name and their first 10 publication titles.
+    - It immediately injects a *"Calculating..."* status panel into the statistics area.
 
-2. **Data Processing (`background.ts`)**  
-   - The scraped data are forwarded to the background script.  
-   - The script **sanitises the name** (removing “Dr.”, “Ph.D.”, etc.).  
-   - It queries the **DBLP Search API** to fetch candidate author profiles.  
-   - Each candidate receives a **score** based on  
-     - *Jaro-Winkler similarity* between names, and  
-     - the count of **overlapping publication titles**.  
-   - If a candidate’s score exceeds a safety threshold, its **DBLP profile ID (pid)** is selected.
+2.  **Tier 1: DBLP Search (`background.ts`)**
+    - The script first attempts to find a matching author profile on DBLP using the smart author-matching heuristic.
+    - If a confident match is found, it proceeds to analyze citations using the **DBLP + OpenCitations SPARQL endpoint**.
+    - **Citation Model:** DBLP results are based on **unique citing articles** (the standard academic definition).
 
-3. **Citation Analysis (`background.ts`)**  
-   - Using that pid, the script fires **two SPARQL queries** against the DBLP SPARQL endpoint (which incorporates **OpenCitations** links):  
-     1. **Total Citing Papers** – how many papers cite any work by the author.  
-     2. **Self-Citing Papers** – of those, how many also list the same author as a co-author (i.e., genuine self-citations).
+3.  **Tier 2: OpenAlex Fallback (`background.ts`)**
+    - If no confident match is found on DBLP (common for non-CS/EE fields), the extension **automatically and seamlessly switches to OpenAlex**.
+    - It runs the same smart author-matching heuristic against the OpenAlex API.
+    - If a match is found, it proceeds with a detailed citation analysis.
+    - **Citation Model:** OpenAlex results are based on **total citation mentions** (non-unique, a paper citing 3 works counts as 3 citations). This method is used to accommodate API limitations for anonymous users.
 
-4. **Displaying Results (`content.ts`)**  
-   - The background script returns **total citations, self-citations, and percentage**.  
-   - The content script replaces the “Calculating …” panel with the final, colour-coded percentage, plus a tooltip explanation and a **Refresh** button for manual re-calculation.
-
+4.  **Displaying Results (`content.ts`)**
+    - The background script returns the calculated data, regardless of the source.
+    - The content script replaces the "Calculating..." panel with the final percentage.
+    - The tooltip text is **dynamically updated** to reflect whether the data came from DBLP or OpenAlex and to explain the relevant citation model used.
 
 ---
 
@@ -72,12 +69,16 @@ The extension is split into two main components:
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/your-repo/scholar-self-citation-analyzer.git
-cd scholar-self-citation-analyzer
+git clone https://github.com/naveedanwarbhatti/Self-Citations-Checker.git
+cd Self-Citations-Checker
 
-# 2. Open Chrome → chrome://extensions
-# 3. Enable “Developer mode” (top-right)
-# 4. Click “Load unpacked” and select the folder containing manifest.json
+# 2. Build the project
+npm install
+npm run build
+
+# 3. Open Chrome → chrome://extensions
+# 4. Enable “Developer mode” (top-right)
+# 5. Click “Load unpacked” and select the `dist` folder.
 ````
 
 Navigate to any Google Scholar author profile to see the extension in action.
@@ -90,7 +91,7 @@ Navigate to any Google Scholar author profile to see the extension in action.
 | ------------------ | ------------------------------------------------------------ |
 | **Language**       | TypeScript (modern syntax & type safety)                     |
 | **Platform**       | Chrome Extension APIs (`chrome.runtime`, `chrome.storage` …) |
-| **Data Sources**   | DBLP Search API • DBLP SPARQL Endpoint • OpenCitations       |
+| **Data Sources**   | DBLP Search API • DBLP SPARQL Endpoint • OpenCitations <br>Fallback: OpenAlex API      |
 | **Algorithms**     | DOM manipulation • async/await • Jaro-Winkler similarity     |
 | **Error Handling** | Custom `DblpRateLimitError` for graceful user feedback       |
 
@@ -118,7 +119,7 @@ Pull requests are welcome!
 
 ## Disclaimer 📝
 
-* The citation data is sourced from the DBLP-OpenCitations integration. This data is open and invaluable, but its **coverage may not be 100% complete** or perfectly up-to-date.
+* The citation data is sourced from DBLP-OpenCitations and OpenAlex. These datasets are invaluable, but their **coverage may not be 100% complete or perfectly up-to-date**.
 * The author-matching heuristic is designed to be accurate but may occasionally fail to find the correct profile or select an incorrect one for authors with common names.
 * This tool is intended for informational purposes and should be used as a supplementary metric, not as a definitive measure of scholarly integrity or impact.
 
