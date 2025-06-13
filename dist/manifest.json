@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Self-Citations Checker",
-  "version": "1.6",
-  "description": "Calculates author self-citation rates on Google Scholar using DBLP and OpenCitation data.",
+  "version": "2.0",
+  "description": "Calculates author self-citation rates on Google Scholar using DBLP, OpenCitation, and OpenAlex data.",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
-    "https://scholar.google.com/citations?user=*"
+    "https://scholar.google.com/citations?user=*",
+	"https://api.openalex.org/"
   ],
   "background": {
     "service_worker": "background.js"

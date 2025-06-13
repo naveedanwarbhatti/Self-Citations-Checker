@@ -1,5 +1,7 @@
 "use strict";
 // content.ts
+//
+// This version has a dynamic disclaimer that changes based on the data source.
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -9,16 +11,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-/**
- * Modifies the "Cited by" table to include a column for self-citation analysis.
- */
+const CACHE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 function injectUI() {
     const statsTable = document.getElementById('gsc_rsb_st');
-    // Exit if the table isn't found or if our UI has already been injected.
     if (!statsTable || document.getElementById('sca-cell-content')) {
         return;
     }
-    // 1. Inject the CSS for the new UI elements.
     const style = document.createElement('style');
     style.innerHTML = `
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -32,7 +30,6 @@ function injectUI() {
     #sca-cell-content { vertical-align: middle; text-align: center; }
   `;
     document.head.appendChild(style);
-    // 2. Add the new "Self-Citation Rate" header to the table.
     const headerRow = statsTable.querySelector('thead tr');
     if (headerRow) {
         const newHeader = document.createElement('th');
@@ -40,7 +37,6 @@ function injectUI() {
         newHeader.innerText = 'Self-Citation Rate';
         headerRow.appendChild(newHeader);
     }
-    // 3. Add the new cell to the first data row, spanning all three rows.
     const firstDataRow = statsTable.querySelector('tbody tr:first-child');
     if (firstDataRow) {
         const newCell = document.createElement('td');
@@ -50,9 +46,6 @@ function injectUI() {
         firstDataRow.appendChild(newCell);
     }
 }
-/**
- * NEW: Renders a specific UI panel when a DBLP rate-limit error occurs.
- */
 function displayDblpRateLimitError(message) {
     var _a;
     const contentCell = document.getElementById('sca-cell-content');
@@ -71,20 +64,23 @@ function displayDblpRateLimitError(message) {
         window.location.reload();
     });
 }
-/**
- * UPDATED: The main UI function now handles the 'rate_limit_error' status.
- */
 function updateUI(response) {
-    var _a;
+    var _a, _b;
     const contentCell = document.getElementById('sca-cell-content');
     if (!contentCell)
         return;
-    // NEW: Check for the rate limit status first.
-    if (response.status === 'rate_limit_error' && response.message) {
-        displayDblpRateLimitError(response.message);
+    if (response.status === 'rate_limit_error') {
+        displayDblpRateLimitError(response.message || 'The API service is busy. Please try again.');
         return;
     }
-    const disclaimer = `Definition: A 'self-citation' is when the citing paper and the cited paper share at least one author.\n\nData Sources: Author data is from DBLP. Citation data is from the DBLP-OpenCitations integration.\n\nDisclaimer: The citation coverage from these sources is not 100% complete.`;
+    // Define the disclaimers for each data source.
+    const dblpDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: DBLP + OpenCitations.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
+    const openAlexDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: OpenAlex.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
+    // Choose the disclaimer based on the response message.
+    let disclaimer = openAlexDisclaimer; // Default to OpenAlex
+    if ((_a = response.message) === null || _a === void 0 ? void 0 : _a.includes('DBLP')) {
+        disclaimer = dblpDisclaimer;
+    }
     if (response.status === 'success' && response.percentage !== undefined) {
         const selfCitePercent = response.percentage;
         contentCell.innerHTML = `
@@ -96,7 +92,7 @@ function updateUI(response) {
         </div>
       </div>
     `;
-        (_a = document.getElementById('sca-refresh')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
+        (_b = document.getElementById('sca-refresh')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
             const scholarId = new URL(window.location.href).searchParams.get("user");
             if (scholarId) {
                 chrome.storage.local.remove(`selfcite_${scholarId}`);
@@ -108,30 +104,42 @@ function updateUI(response) {
         contentCell.innerHTML = `<span style="color: red;">Error:</span> ${response.message || 'Unknown error'}`;
     }
 }
-/**
- * The main analysis function.
- */
 function runAnalysis() {
     return __awaiter(this, void 0, void 0, function* () {
         injectUI();
-        const authorNameElement = document.getElementById('gsc_prf_in');
-        const authorName = authorNameElement ? authorNameElement.innerText.trim() : null;
-        if (!authorName) {
-            updateUI({ status: 'error', message: 'Could not find author name.' });
+        const scholarId = new URL(window.location.href).searchParams.get("user");
+        if (!scholarId) {
+            updateUI({ status: 'error', message: 'Could not get user ID from URL.' });
             return;
         }
-        const publicationTitles = Array.from(document.querySelectorAll('.gsc_a_at'))
-            .slice(0, 10)
-            .map(el => el.innerText);
-        chrome.runtime.sendMessage({ action: "processAuthor", authorName, publicationTitles }, (response) => {
-            if (chrome.runtime.lastError) {
-                updateUI({ status: 'error', message: 'Internal communication error with the extension.' });
-                console.error(chrome.runtime.lastError);
+        const cacheKey = `selfcite_${scholarId}`;
+        chrome.storage.local.get(cacheKey, (result) => {
+            const cachedEntry = result[cacheKey];
+            if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION_MS)) {
+                console.log("Displaying fresh data from cache.");
+                updateUI(cachedEntry.data);
                 return;
             }
-            updateUI(response);
+            console.log("Cache is empty or stale. Fetching new data.");
+            const authorNameElement = document.getElementById('gsc_prf_in');
+            const authorName = authorNameElement ? authorNameElement.innerText.trim() : null;
+            if (!authorName) {
+                updateUI({ status: 'error', message: 'Could not find author name.' });
+                return;
+            }
+            const publicationTitles = Array.from(document.querySelectorAll('.gsc_a_at')).slice(0, 10).map(el => el.innerText);
+            chrome.runtime.sendMessage({ action: "processAuthor", authorName, publicationTitles }, (response) => {
+                if (chrome.runtime.lastError) {
+                    updateUI({ status: 'error', message: `Internal Error: ${chrome.runtime.lastError.message}` });
+                    return;
+                }
+                updateUI(response);
+                if (response.status === 'success') {
+                    const newCacheEntry = { data: response, timestamp: Date.now() };
+                    chrome.storage.local.set({ [cacheKey]: newCacheEntry });
+                }
+            });
         });
     });
 }
-// Run the analysis once the page has fully loaded.
 window.addEventListener('load', runAnalysis);
