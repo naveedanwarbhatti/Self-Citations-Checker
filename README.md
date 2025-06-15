@@ -1,7 +1,7 @@
 
 # Scholar Self-Citation Analyzer
 
-![Version 2.0](https://img.shields.io/badge/version-2.0-blue.svg)
+![Version 2.1](https://img.shields.io/badge/version-2.1-blue.svg)
 ![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 A browser extension that automatically calculates and displays an author’s self-citation rate directly on their Google Scholar profile page, **now with a hybrid DBLP + OpenAlex backend to support all academic disciplines.**
