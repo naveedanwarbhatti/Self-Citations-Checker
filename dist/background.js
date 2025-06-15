@@ -4,6 +4,10 @@
 // FINAL, VERIFIED VERSION: This version fixes all TypeScript compilation errors
 // by using an explicit helper function to safely extract author IDs, guaranteeing
 // correct types and resolving all build issues.
+//
+// UPDATED: The main listener logic is now more robust. If the DBLP lookup
+// fails for any reason, it automatically falls back to the OpenAlex lookup
+// instead of immediately returning an error.
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -322,8 +326,9 @@ function getOpenAlexCitationCounts(authorId) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "processAuthor") {
         (() => __awaiter(void 0, void 0, void 0, function* () {
+            const sanitizedName = sanitizeAuthorName(request.authorName);
+            // --- DBLP Attempt ---
             try {
-                const sanitizedName = sanitizeAuthorName(request.authorName);
                 console.log("Step 1: Attempting to find author on DBLP...");
                 const bestPid = yield findBestDblpProfile(sanitizedName, request.publicationTitles);
                 if (bestPid) {
@@ -338,37 +343,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         percentage: percentage,
                         message: `(From DBLP PID: ${bestPid})`
                     });
+                    return; // Exit after successful DBLP processing.
+                }
+                // If no profile is found, log it and let it fall through to OpenAlex.
+                console.log("--- DBLP profile not found. Proceeding to OpenAlex fallback. ---");
+            }
+            catch (error) {
+                // If DBLP fails for ANY reason (rate limit, network error, etc.),
+                // log the error and fall back to OpenAlex.
+                const err = error;
+                console.warn(`DBLP attempt failed: ${err.message}. Switching to OpenAlex fallback.`);
+            }
+            // --- OpenAlex Fallback ---
+            try {
+                console.log("Step 2: Switching to OpenAlex fallback...");
+                const bestOpenAlexId = yield findBestOpenAlexProfile(sanitizedName, request.publicationTitles);
+                if (bestOpenAlexId) {
+                    console.log(`---> OpenAlex profile found: ${bestOpenAlexId}. Fetching OpenAlex citations...`);
+                    const { total, self } = yield getOpenAlexCitationCounts(bestOpenAlexId);
+                    const percentage = total > 0 ? (self / total) * 100 : 0;
+                    sendResponse({
+                        status: 'success',
+                        selfCitations: self,
+                        totalCitations: total,
+                        percentage: percentage,
+                        message: `(From OpenAlex ID: ${bestOpenAlexId})`
+                    });
                 }
                 else {
-                    console.log("--- DBLP profile not found. Switching to OpenAlex fallback. ---");
-                    const bestOpenAlexId = yield findBestOpenAlexProfile(sanitizedName, request.publicationTitles);
-                    if (bestOpenAlexId) {
-                        console.log(`---> OpenAlex profile found: ${bestOpenAlexId}. Fetching OpenAlex citations...`);
-                        const { total, self } = yield getOpenAlexCitationCounts(bestOpenAlexId);
-                        const percentage = total > 0 ? (self / total) * 100 : 0;
-                        sendResponse({
-                            status: 'success',
-                            selfCitations: self,
-                            totalCitations: total,
-                            percentage: percentage,
-                            message: `(From OpenAlex ID: ${bestOpenAlexId})`
-                        });
-                    }
-                    else {
-                        throw new Error('Could not find a matching profile on DBLP or OpenAlex.');
-                    }
+                    throw new Error('Could not find a matching profile on DBLP or OpenAlex.');
                 }
             }
             catch (error) {
+                // If OpenAlex also fails, then we send the final error.
                 const err = error;
-                if (err instanceof DblpRateLimitError) {
-                    sendResponse({ status: 'rate_limit_error', message: err.message });
-                }
-                else {
-                    sendResponse({ status: 'error', message: err.message || 'An unknown error occurred.' });
-                }
+                sendResponse({ status: 'error', message: err.message || 'An unknown error occurred.' });
             }
         }))();
-        return true;
+        return true; // Keep the listener alive for the async response
     }
 });
