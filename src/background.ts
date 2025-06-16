@@ -63,7 +63,10 @@ function jaroWinkler(s1: string, s2: string): number {
     return jaro;
 }
 
-const normalizeText = (s: string) => s.toLowerCase().replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]]/g, " ").replace(/\s+/g, ' ').trim();
+const normalizeText = (s: string) => {
+    if (!s) return ""; // Return an empty string if the input is null or undefined
+    return s.toLowerCase().replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]]/g, " ").replace(/\s+/g, ' ').trim();
+}
 
 
 // --- DBLP: Functions ---

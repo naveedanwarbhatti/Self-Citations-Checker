@@ -83,7 +83,11 @@ function jaroWinkler(s1, s2) {
     }
     return jaro;
 }
-const normalizeText = (s) => s.toLowerCase().replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]]/g, " ").replace(/\s+/g, ' ').trim();
+const normalizeText = (s) => {
+    if (!s)
+        return ""; // Return an empty string if the input is null or undefined
+    return s.toLowerCase().replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]]/g, " ").replace(/\s+/g, ' ').trim();
+};
 // --- DBLP: Functions ---
 function executeSparqlQuery(query) {
     return __awaiter(this, void 0, void 0, function* () {
