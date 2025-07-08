@@ -8,7 +8,8 @@
   ],
   "host_permissions": [
     "https://scholar.google.com/citations?user=*",
-	"https://api.openalex.org/"
+	"https://api.openalex.org/",
+	"https://dblp.org/"
   ],
   "background": {
     "service_worker": "background.js"

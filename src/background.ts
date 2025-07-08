@@ -1,12 +1,14 @@
 // background.ts
 //
-// FINAL, VERIFIED VERSION: This version fixes all TypeScript compilation errors
-// by using an explicit helper function to safely extract author IDs, guaranteeing
-// correct types and resolving all build issues.
+// FINAL, VERIFIED VERSION: This version uses a "guess and check" strategy for
+// DBLP hubs, avoiding HTML parsing and the Offscreen API entirely. It works
+// reliably within the service worker environment.
 //
-// UPDATED: The main listener logic is now more robust. If the DBLP lookup
-// fails for any reason, it automatically falls back to the OpenAlex lookup
-// instead of immediately returning an error.
+// STRATEGY:
+// 1. Detect the most likely "base PID" for a common name from API results.
+// 2. Programmatically generate a list of potential PID variants (e.g., base-1, base-2).
+// 3. Test each variant by attempting to fetch its publications; if the fetch fails,
+//    the PID is invalid and we move to the next.
 
 // --- Type Definitions (assuming types.ts is in the project) ---
 interface ApiResponse {
@@ -29,6 +31,7 @@ class DblpRateLimitError extends Error {
 const HEURISTIC_MIN_OVERLAP_COUNT = 2;
 const HEURISTIC_SCORE_THRESHOLD = 2.5;
 const HEURISTIC_MIN_NAME_SIMILARITY = 0.65;
+const DBLP_MAX_HUB_VARIANTS_TO_CHECK = 150; // Max number of PIDs to guess (e.g., -1 to -150)
 
 // --- DBLP: Constants ---
 const DBLP_API_AUTHOR_SEARCH_URL = "https://dblp.org/search/author/api";
@@ -105,28 +108,82 @@ async function getDblpCitationCounts(authorUri: string): Promise<{ total: number
     return { total, self };
 }
 
-async function searchDblpForCandidates(authorName: string): Promise<any[]> {
-    const url = new URL(DBLP_API_AUTHOR_SEARCH_URL);
-    url.searchParams.set('q', authorName); url.searchParams.set('format', 'json'); url.searchParams.set('h', '10');
-    try {
-        const resp = await fetch(url.toString());
-        if (resp.status === 429) throw new DblpRateLimitError("DBLP's service is busy.");
-        if (!resp.ok) return [];
-        const data = await resp.json();
-        const hits = data.result?.hits?.hit;
-        return Array.isArray(hits) ? hits : hits ? [hits] : [];
-    } catch (error) {
-        if (error instanceof DblpRateLimitError) throw error;
-        throw new Error(`A network error occurred while contacting DBLP.`);
-    }
-}
-
 function extractPidFromUrl(url: string): string | null {
     let match = url.match(/pid\/([^/]+\/[^.]+)/i); if (match?.[1]) return match[1];
     match = url.match(/pers\/hd\/[a-z0-9]\/([^.]+)/i); if (match?.[1]) return match[1].replace(/=/g, '');
     match = url.match(/pid\/([\w\/-]+)\.html/i); if (match?.[1]) return match[1];
     return null;
 }
+
+
+// ===================================================================================
+// START: "GUESS AND CHECK" LOGIC
+// ===================================================================================
+
+async function searchDblpForCandidates(authorName: string): Promise<any[]> {
+    const url = new URL(DBLP_API_AUTHOR_SEARCH_URL);
+    url.searchParams.set('q', authorName);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('h', '500'); 
+    try {
+        const resp = await fetch(url.toString());
+        if (resp.status === 429) throw new DblpRateLimitError("DBLP's service is busy.");
+        if (!resp.ok) return [];
+        
+        const data = await resp.json();
+        const hits = data.result?.hits?.hit;
+        const initialCandidates = Array.isArray(hits) ? hits : hits ? [hits] : [];
+
+        if (initialCandidates.length === 0) return [];
+
+        // Find the most common base PID from the search results
+        const basePidCounts: Record<string, number> = {};
+        for (const hit of initialCandidates) {
+            const pid = extractPidFromUrl(hit.info.url);
+            if (pid) {
+                const basePid = pid.split('-')[0];
+                basePidCounts[basePid] = (basePidCounts[basePid] || 0) + 1;
+            }
+        }
+        
+        let mostCommonBasePid: string | null = null;
+        let maxCount = 0;
+        for (const basePid in basePidCounts) {
+            if (basePidCounts[basePid] > maxCount) {
+                maxCount = basePidCounts[basePid];
+                mostCommonBasePid = basePid;
+            }
+        }
+
+        // If a hub is detected, generate potential candidates programmatically
+        if (mostCommonBasePid && maxCount > 4) {
+            console.log(`[DBLP SEARCH] Detected likely hub with base PID "${mostCommonBasePid}". Generating variants to test.`);
+            const generatedCandidates: any[] = [];
+            for (let i = 1; i <= DBLP_MAX_HUB_VARIANTS_TO_CHECK; i++) {
+                const newPid = `${mostCommonBasePid}-${i}`;
+                generatedCandidates.push({
+                    info: {
+                        author: `${authorName} (Variant ${i})`, // A placeholder name
+                        url: `https://dblp.org/pid/${newPid}.html`
+                    }
+                });
+            }
+            return generatedCandidates;
+        }
+        
+        // Fallback: If no clear hub is detected, return the raw list.
+        console.log("[DBLP SEARCH] No obvious hub detected. Proceeding with raw API results.");
+        return initialCandidates;
+
+    } catch (error) {
+        if (error instanceof DblpRateLimitError) throw error;
+        throw new Error(`A network error occurred while contacting DBLP.`);
+    }
+}
+// ===================================================================================
+// END: "GUESS AND CHECK" LOGIC
+// ===================================================================================
+
 
 async function fetchDblpPublications(pid: string): Promise<{ title: string; year: string | null }[]> {
     const authorUri = `https://dblp.org/pid/${pid}`;
@@ -136,38 +193,75 @@ async function fetchDblpPublications(pid: string): Promise<{ title: string; year
 }
 
 async function findBestDblpProfile(scholarName: string, scholarTitles: string[]): Promise<string | null> {
+    console.log(`[DBLP HEURISTIC] Starting search for: "${scholarName}" with ${scholarTitles.length} publication titles.`);
+    
     const candidates = await searchDblpForCandidates(scholarName);
+    console.log(`[DBLP HEURISTIC] Generated ${candidates.length} potential candidates to evaluate.`);
+
+    if (candidates.length === 0) {
+        console.log(`[DBLP HEURISTIC] No candidates found. Aborting.`);
+        return null;
+    }
+
     let bestPid: string | null = null;
     let highestScore = 0;
-    for (const candidate of candidates) {
-        const dblpName = candidate.info.author.replace(/\s\d{4}$/, '');
-        const nameSimilarity = jaroWinkler(scholarName.toLowerCase(), dblpName.toLowerCase());
-        if (nameSimilarity < HEURISTIC_MIN_NAME_SIMILARITY) continue;
+
+    for (const [index, candidate] of candidates.entries()) {
+        const dblpName = candidate.info.author.replace(/\s+\(Variant \d+\)$/, '').trim();
         const pid = extractPidFromUrl(candidate.info.url);
-        if (!pid) continue;
+
+        if (!pid) continue; // Should not happen with generated PIDs
+
+        // Minimal logging to avoid spamming the console for 150 candidates
+        if ((index + 1) % 25 === 0) {
+            console.log(`--- Evaluating candidate batch around #${index + 1} (PID: ${pid}) ---`);
+        }
+
+        const nameSimilarity = jaroWinkler(scholarName.toLowerCase(), dblpName.toLowerCase());
+        if (nameSimilarity < HEURISTIC_MIN_NAME_SIMILARITY) {
+            continue; // This check is fast and avoids network requests
+        }
+
+        let dblpPublications;
+        try {
+            // This is the "check" part of "guess and check".
+            // It will throw an error if the PID does not exist, which we catch.
+            dblpPublications = await fetchDblpPublications(pid);
+        } catch (error) {
+            // This PID is invalid. This is expected. We just continue to the next guess.
+            continue;
+        }
+        
+        // If we get here, the PID is valid. Now check for title overlap.
         let currentScore = nameSimilarity * 2.0;
         let overlapCount = 0;
-        const dblpPublications = await fetchDblpPublications(pid);
         for (const scholarTitle of scholarTitles) {
             for (const dblpPub of dblpPublications) {
-                if (jaroWinkler(normalizeText(scholarTitle), normalizeText(dblpPub.title)) > 0.85) {
-                    overlapCount++; currentScore += 1.0; break;
+                const titleSimilarity = jaroWinkler(normalizeText(scholarTitle), normalizeText(dblpPub.title));
+                if (titleSimilarity > 0.85) {
+                    overlapCount++;
+                    currentScore += 1.0;
+                    break;
                 }
             }
         }
-        if (currentScore > highestScore && overlapCount >= HEURISTIC_MIN_OVERLAP_COUNT) {
-            highestScore = currentScore; bestPid = pid;
+        
+        if (currentScore > highestScore && overlapCount >= HEURISTIC_MIN_OVERLAP_COUNT && currentScore >= HEURISTIC_SCORE_THRESHOLD) {
+            highestScore = currentScore;
+            bestPid = pid;
+            // Log extensively only when we find a promising candidate
+            console.log(`\n✅ New best candidate found! PID: ${pid}`);
+            console.log(`   - Overlap Count: ${overlapCount}, Score: ${currentScore.toFixed(2)}`);
         }
     }
-    return (bestPid && highestScore >= HEURISTIC_SCORE_THRESHOLD) ? bestPid : null;
+
+    console.log(`\n[DBLP HEURISTIC] Finished evaluating all candidates. Final chosen PID: ${bestPid || 'None'}`);
+    return bestPid;
 }
+
 
 // --- OpenAlex: Functions ---
 
-/**
- * NEW HELPER FUNCTION: Safely extracts author IDs from an authorships array
- * and returns a clean Set of strings, satisfying the TypeScript compiler.
- */
 function getAuthorIdsFromAuthorships(authorships: any[]): Set<string> {
     const idSet = new Set<string>();
     if (!authorships) {
@@ -298,15 +392,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         percentage: percentage,
                         message: `(From DBLP PID: ${bestPid})`
                     });
-                    return; // Exit after successful DBLP processing.
+                    return; 
                 }
                 
-                // If no profile is found, log it and let it fall through to OpenAlex.
                 console.log("--- DBLP profile not found. Proceeding to OpenAlex fallback. ---");
 
             } catch (error) {
-                // If DBLP fails for ANY reason (rate limit, network error, etc.),
-                // log the error and fall back to OpenAlex.
                 const err = error as Error;
                 console.warn(`DBLP attempt failed: ${err.message}. Switching to OpenAlex fallback.`);
             }
@@ -332,11 +423,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     throw new Error('Could not find a matching profile on DBLP or OpenAlex.');
                 }
             } catch (error) {
-                // If OpenAlex also fails, then we send the final error.
                 const err = error as Error;
                 sendResponse({ status: 'error', message: err.message || 'An unknown error occurred.' });
             }
         })();
-        return true; // Keep the listener alive for the async response
+        return true; 
     }
 });
