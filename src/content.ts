@@ -81,15 +81,9 @@ function updateUI(response: ApiResponse): void {
       return;
   }
   
-  // Define the disclaimers for each data source.
-  const dblpDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: DBLP + OpenCitations.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
-  const openAlexDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: OpenAlex.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
-
-  // Choose the disclaimer based on the response message.
-  let disclaimer = openAlexDisclaimer; // Default to OpenAlex
-  if (response.message?.includes('DBLP')) {
-      disclaimer = dblpDisclaimer;
-  }
+  // Canonical disclaimer for the merged evidence pipeline.
+  const canonicalDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Sources: OpenAlex (metadata + citations) plus OpenCitations when a DOI is present. Citations are deduplicated as unique citing→cited edges before computing the rate.\n\nDisclaimer: Coverage may be incomplete. Results are cached for 30 days.`;
+  const disclaimer = canonicalDisclaimer;
 
   if (response.status === 'success' && response.percentage !== undefined) {
     const selfCitePercent = response.percentage;

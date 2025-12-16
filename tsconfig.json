@@ -1,12 +1,15 @@
 {
-   "compilerOptions": {
+  "compilerOptions": {
     "target": "es6",
     "module": "es6",
+    "moduleResolution": "node",
     "outDir": "./dist",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "typeRoots": ["./node_modules/@types"],
+    "types": ["chrome", "node"]
   },
   "include": [
     "*.ts",
