@@ -1,7 +1,7 @@
 // background.ts
 // Canonical citation graph pipeline that merges evidence from OpenAlex and OpenCitations.
 
-import { ApiResponse } from './types';
+import type { ApiResponse } from './types';
 
 type ProviderName = 'openalex' | 'opencitations';
 
@@ -374,5 +374,3 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
   return false;
 });
-
-export {};
