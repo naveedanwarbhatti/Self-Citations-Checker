@@ -65,7 +65,7 @@ function displayDblpRateLimitError(message) {
     });
 }
 function updateUI(response) {
-    var _a, _b;
+    var _a;
     const contentCell = document.getElementById('sca-cell-content');
     if (!contentCell)
         return;
@@ -73,14 +73,9 @@ function updateUI(response) {
         displayDblpRateLimitError(response.message || 'The API service is busy. Please try again.');
         return;
     }
-    // Define the disclaimers for each data source.
-    const dblpDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: DBLP + OpenCitations.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
-    const openAlexDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Source: OpenAlex.\n\nDisclaimer: Data may be incomplete. Results are cached for 30 days.`;
-    // Choose the disclaimer based on the response message.
-    let disclaimer = openAlexDisclaimer; // Default to OpenAlex
-    if ((_a = response.message) === null || _a === void 0 ? void 0 : _a.includes('DBLP')) {
-        disclaimer = dblpDisclaimer;
-    }
+    // Canonical disclaimer for the merged evidence pipeline.
+    const canonicalDisclaimer = `Definition: A 'self-citation' is when the citing and cited papers share any co-author.\n\nData Sources: OpenAlex (metadata + citations) plus OpenCitations when a DOI is present. Citations are deduplicated as unique citing→cited edges before computing the rate.\n\nDisclaimer: Coverage may be incomplete. Results are cached for 30 days.`;
+    const disclaimer = canonicalDisclaimer;
     if (response.status === 'success' && response.percentage !== undefined) {
         const selfCitePercent = response.percentage;
         contentCell.innerHTML = `
@@ -92,7 +87,7 @@ function updateUI(response) {
         </div>
       </div>
     `;
-        (_b = document.getElementById('sca-refresh')) === null || _b === void 0 ? void 0 : _b.addEventListener('click', () => {
+        (_a = document.getElementById('sca-refresh')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', () => {
             const scholarId = new URL(window.location.href).searchParams.get("user");
             if (scholarId) {
                 chrome.storage.local.remove(`selfcite_${scholarId}`);
