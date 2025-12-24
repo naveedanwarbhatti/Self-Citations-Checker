@@ -239,9 +239,18 @@ type ParsedName = {
 };
 
 function parseNameForMatch(name: string): ParsedName {
-  const raw = stripDiacritics(name)
+  // Reorder "Last, First Middle" -> "First Middle Last"
+  let working = stripDiacritics(name).trim();
+  const commaIndex = working.indexOf(',');
+  if (commaIndex !== -1) {
+    const left = working.slice(0, commaIndex).trim();
+    const right = working.slice(commaIndex + 1).trim();
+    if (right) working = `${right} ${left}`.trim();
+  }
+
+  const raw = working
     .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .replace(/[.,]/g, ' ')
+    .replace(/[.]/g, ' ')     // keep comma handled already
     .replace(/\s+/g, ' ')
     .trim();
 
