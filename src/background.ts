@@ -40,7 +40,10 @@ const OPEN_CITATIONS_BASE = 'https://opencitations.net/index/api/v1';
 const WORKS_PER_PAGE = 200;
 const POLITE_DELAY_MS = 50;
 const TITLE_SIMILARITY_THRESHOLD = 0.88;
-const MAX_TITLE_MATCHES = 5;
+
+// Optional: increasing this can help when titles are common and the correct match
+// isn't in the top few OpenAlex search results.
+const MAX_TITLE_MATCHES = 20;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,16 +51,22 @@ function delay(ms: number): Promise<void> {
 
 function sanitizeAuthorName(name: string): string {
   let cleaned = name.trim();
-  const commaIndex = cleaned.indexOf(',');
-  if (commaIndex !== -1) {
-    cleaned = cleaned.substring(0, commaIndex);
+
+  // Remove academic prefixes early (important for "Dr Smith, Alex" style strings).
+  const prefixPatterns = [/^professor\s*/i, /^prof\.?\s*/i, /^dr\.?\s*/i];
+  for (const p of prefixPatterns) {
+    cleaned = cleaned.replace(p, '');
   }
 
-  const prefixPatterns = [
-    /^professor\s*/i,
-    /^prof\.?\s*/i,
-    /^dr\.?\s*/i,
-  ];
+  // If name is in "Last, First Middle" format, reorder to "First Middle Last".
+  const commaIndex = cleaned.indexOf(',');
+  if (commaIndex !== -1) {
+    const last = cleaned.slice(0, commaIndex).trim();
+    const rest = cleaned.slice(commaIndex + 1).trim();
+    if (rest) cleaned = `${rest} ${last}`.trim();
+  }
+
+  // Remove academic prefixes again in case they appear after reordering.
   for (const p of prefixPatterns) {
     cleaned = cleaned.replace(p, '');
   }
@@ -106,7 +115,12 @@ function jaroWinkler(s1: string, s2: string): number {
   return jaro;
 }
 
-const normalizeText = (s: string): string => s.toLowerCase().replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+const normalizeText = (s: string): string =>
+  s
+    .toLowerCase()
+    .replace(/[\.,\/#!$%\^&\*;:{}=\_`~?"“”()\[\]-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 function normalizeDoi(doi: string | undefined | null): string | undefined {
   if (!doi) return undefined;
@@ -132,10 +146,16 @@ function canonicalAuthorIdFromAuthorship(authorship: any): CanonicalAuthor | nul
   const displayName = authorship.author?.display_name as string | undefined;
 
   if (orcid) {
-    return { canonicalId: `orcid:${orcid.replace('https://orcid.org/', '')}`, displayName: displayName || orcid };
+    return {
+      canonicalId: `orcid:${orcid.replace('https://orcid.org/', '')}`,
+      displayName: displayName || orcid,
+    };
   }
   if (openalexId) {
-    return { canonicalId: `openalex:${stripOpenAlexId(openalexId)}`, displayName: displayName || openalexId };
+    return {
+      canonicalId: `openalex:${stripOpenAlexId(openalexId)}`,
+      displayName: displayName || openalexId,
+    };
   }
   if (displayName) {
     return { canonicalId: `name:${normalizeText(displayName)}`, displayName };
@@ -186,9 +206,138 @@ async function fetchOpenAlexWorkByDoi(doi: string): Promise<CanonicalWork | null
   return canonicalizeOpenAlexWork(data);
 }
 
+/**
+ * Initials-aware author name matching to handle cases like:
+ *  - "Alex Jordan Smith" vs "AJ Smith"
+ *  - "Alex Jordan Smith" vs "A Jordan Smith"
+ *  - "Alex Jordan Smith" vs "Alex J Smith"
+ */
+const SURNAME_PARTICLES = new Set([
+  'da',
+  'de',
+  'del',
+  'della',
+  'der',
+  'di',
+  'du',
+  'la',
+  'le',
+  'van',
+  'von',
+  'st',
+]);
+
+function stripDiacritics(s: string): string {
+  // Removes combining marks (Chrome safe)
+  return s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+}
+
+type ParsedName = {
+  surname: string; // normalized surname (may include particles)
+  givenTokens: string[]; // normalized given tokens
+  initials: string[]; // derived initials
+};
+
+function parseNameForMatch(name: string): ParsedName {
+  const raw = stripDiacritics(name)
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const partsRaw = raw.split(' ').filter(Boolean);
+  const partsNorm = partsRaw.map((p) => normalizeText(p));
+
+  if (partsNorm.length === 0) return { surname: '', givenTokens: [], initials: [] };
+
+  // Surname = last token, plus any particles immediately preceding it (e.g., "van der Waals")
+  let i = partsNorm.length - 1;
+  const surnameTokens: string[] = [partsNorm[i]];
+  i--;
+
+  while (i >= 0 && SURNAME_PARTICLES.has(partsNorm[i])) {
+    surnameTokens.unshift(partsNorm[i]);
+    i--;
+  }
+
+  const givenNorm = partsNorm.slice(0, i + 1);
+  const givenRaw = partsRaw.slice(0, i + 1);
+
+  const initials: string[] = [];
+  for (let idx = 0; idx < givenNorm.length; idx++) {
+    const gn = givenNorm[idx];
+    const gr = givenRaw[idx];
+
+    if (!gn) continue;
+
+    // Token is already an initial ("A")
+    if (/^[a-z]$/.test(gn)) {
+      initials.push(gn);
+      continue;
+    }
+
+    // Detect compact ALLCAPS initials like "AJ", "AJP"
+    const compact = gr.replace(/[^A-Za-z]/g, '');
+    const isAllCaps = compact.length >= 2 && compact.length <= 4 && compact === compact.toUpperCase();
+    const noVowels = !/[AEIOU]/.test(compact); // heuristic to avoid splitting "Al" into A,L
+
+    if (isAllCaps && noVowels) {
+      for (const ch of compact.toLowerCase()) initials.push(ch);
+    } else {
+      initials.push(gn[0]);
+    }
+  }
+
+  return {
+    surname: surnameTokens.join(' '),
+    givenTokens: givenNorm,
+    initials,
+  };
+}
+
+function likelySameAuthorName(candidateDisplay: string, targetName: string): boolean {
+  const c = parseNameForMatch(candidateDisplay);
+  const t = parseNameForMatch(targetName);
+
+  if (!c.surname || !t.surname) return false;
+
+  // Strong surname match (required)
+  const surnameOk = c.surname === t.surname || jaroWinkler(c.surname, t.surname) >= 0.95;
+  if (!surnameOk) return false;
+
+  // If both sides have at least one "real" given token, accept fuzzy given-name match
+  const cGiven = c.givenTokens.filter((x) => x.length > 1);
+  const tGiven = t.givenTokens.filter((x) => x.length > 1);
+
+  if (cGiven.length && tGiven.length) {
+    for (const cg of cGiven) {
+      for (const tg of tGiven) {
+        if (jaroWinkler(cg, tg) >= 0.9) return true;
+      }
+    }
+  }
+
+  // Otherwise fall back to initials logic
+  if (!c.initials.length || !t.initials.length) return false;
+
+  // First initial must match
+  if (c.initials[0] !== t.initials[0]) return false;
+
+  // If candidate provides multiple initials (AJ), require they match the target prefix (Alex Jordan)
+  if (c.initials.length >= 2) {
+    for (let i = 0; i < c.initials.length; i++) {
+      if (t.initials[i] !== c.initials[i]) return false;
+    }
+  }
+
+  return true;
+}
+
 async function resolveWorkByTitle(title: string, authorName: string): Promise<CanonicalWork | null> {
   const normalizedTitle = normalizeText(title);
-  const url = `${OPENALEX_API_BASE}/works?search=${encodeURIComponent(title)}&select=id,doi,display_name,publication_year,authorships&per-page=${MAX_TITLE_MATCHES}`;
+  const url = `${OPENALEX_API_BASE}/works?search=${encodeURIComponent(
+    title,
+  )}&select=id,doi,display_name,publication_year,authorships&per-page=${MAX_TITLE_MATCHES}`;
   const resp = await fetch(url);
   if (!resp.ok) return null;
   const data = await resp.json();
@@ -203,9 +352,13 @@ async function resolveWorkByTitle(title: string, authorName: string): Promise<Ca
     if (!work) continue;
     const similarity = jaroWinkler(normalizedTitle, normalizeText(work.title));
     if (similarity < TITLE_SIMILARITY_THRESHOLD) continue;
+
     let score = similarity;
-    const authorHit = work.authors.some((a) => jaroWinkler(normalizeText(a.displayName), normalizeText(sanitizedName)) > 0.85);
+
+    // Updated: initials-aware matching to handle "AJ Smith" / "A Jordan Smith" cases.
+    const authorHit = work.authors.some((a) => likelySameAuthorName(a.displayName, sanitizedName));
     if (authorHit) score += 0.05;
+
     if (score > bestScore) {
       bestScore = score;
       best = work;
@@ -228,7 +381,10 @@ async function resolveWorksFromScholarTitles(authorName: string, titles: string[
   return resolvedWorks;
 }
 
-async function fetchOpenAlexIncomingCitations(work: CanonicalWork, workRegistry: Map<string, CanonicalWork>): Promise<ProviderEdge[]> {
+async function fetchOpenAlexIncomingCitations(
+  work: CanonicalWork,
+  workRegistry: Map<string, CanonicalWork>,
+): Promise<ProviderEdge[]> {
   const edges: ProviderEdge[] = [];
   const openAlexId = work.externalIds.openalexId;
   if (!openAlexId) return edges;
@@ -255,7 +411,10 @@ async function fetchOpenAlexIncomingCitations(work: CanonicalWork, workRegistry:
   return edges;
 }
 
-async function fetchOpenCitationsIncoming(work: CanonicalWork, workRegistry: Map<string, CanonicalWork>): Promise<ProviderEdge[]> {
+async function fetchOpenCitationsIncoming(
+  work: CanonicalWork,
+  workRegistry: Map<string, CanonicalWork>,
+): Promise<ProviderEdge[]> {
   const edges: ProviderEdge[] = [];
   const doi = normalizeDoi(work.externalIds.doi);
   if (!doi) return edges;
@@ -284,7 +443,10 @@ async function fetchOpenCitationsIncoming(work: CanonicalWork, workRegistry: Map
   return edges;
 }
 
-async function fetchCitationEdges(work: CanonicalWork, workRegistry: Map<string, CanonicalWork>): Promise<ProviderEdge[]> {
+async function fetchCitationEdges(
+  work: CanonicalWork,
+  workRegistry: Map<string, CanonicalWork>,
+): Promise<ProviderEdge[]> {
   const [openAlexEdges, openCitationsEdges] = await Promise.all([
     fetchOpenAlexIncomingCitations(work, workRegistry),
     fetchOpenCitationsIncoming(work, workRegistry),
@@ -314,7 +476,10 @@ function hasAuthorOverlap(citing: CanonicalWork, cited: CanonicalWork): boolean 
   return cited.authors.some((author) => citingAuthors.has(author.canonicalId));
 }
 
-function computeSelfCitationMetrics(edgeMap: Map<string, CanonicalEdge>, workRegistry: Map<string, CanonicalWork>): { total: number; self: number } {
+function computeSelfCitationMetrics(
+  edgeMap: Map<string, CanonicalEdge>,
+  workRegistry: Map<string, CanonicalWork>,
+): { total: number; self: number } {
   let total = 0;
   let self = 0;
   for (const edge of edgeMap.values()) {
